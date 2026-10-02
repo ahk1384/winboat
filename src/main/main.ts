@@ -53,6 +53,8 @@ const windowStore = new Store<SchemaType>({
 });
 
 let mainWindow: BrowserWindow | null = null;
+const SHORTCUT_LAUNCH_ARG = "--launch-app-payload";
+let pendingShortcutPayload: string | null = parseShortcutPayload(process.argv);
 
 function createWindow() {
     if (!app.requestSingleInstanceLock()) {
@@ -97,6 +99,11 @@ function createWindow() {
     });
 
     enable(mainWindow.webContents);
+    mainWindow.webContents.on("did-finish-load", () => {
+        if (pendingShortcutPayload) {
+            mainWindow?.webContents.send("shortcut-launch-request", pendingShortcutPayload);
+        }
+    });
 
     if (process.env.NODE_ENV === "development") {
         const rendererPort = process.argv[2];
@@ -138,8 +145,13 @@ app.on("window-all-closed", function () {
     if (process.platform !== "darwin") app.quit();
 });
 
-app.on("second-instance", _ => {
+app.on("second-instance", (_event, argv) => {
     if (mainWindow) {
+        const secondInstancePayload = parseShortcutPayload(argv);
+        if (secondInstancePayload) {
+            pendingShortcutPayload = secondInstancePayload;
+            mainWindow.webContents.send("shortcut-launch-request", pendingShortcutPayload);
+        }
         mainWindow.focus();
     }
 });
@@ -147,3 +159,24 @@ app.on("second-instance", _ => {
 ipcMain.on("message", (_event, message) => {
     console.log(message);
 });
+
+ipcMain.on("shortcut-launch-ready", _event => {
+    if (!pendingShortcutPayload) return;
+    mainWindow?.webContents.send("shortcut-launch-request", pendingShortcutPayload);
+});
+
+function parseShortcutPayload(argv: string[]) {
+    const payloadIndex = argv.findIndex(arg => arg === SHORTCUT_LAUNCH_ARG);
+    if (payloadIndex !== -1) {
+        if (payloadIndex >= argv.length - 1) {
+            return null;
+        }
+        return argv[payloadIndex + 1];
+    }
+
+    const prefixedArg = argv.find(arg => arg.startsWith(`${SHORTCUT_LAUNCH_ARG}=`));
+    if (!prefixedArg) {
+        return null;
+    }
+    return prefixedArg.slice(`${SHORTCUT_LAUNCH_ARG}=`.length);
+}

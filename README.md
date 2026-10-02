@@ -30,6 +30,7 @@ WinBoat is currently in beta, so expect to occasionally run into hiccups and bug
 - **🎨 Elegant Interface**: Sleek and intuitive interface that seamlessly integrates Windows into your Linux desktop environment, making it feel like a native experience
 - **📦 Automated Installs**: Simple installation process through our interface - pick your preferences & specs and let us handle the rest
 - **🚀 Run Any App**: If it runs on Windows, it can run on WinBoat. Enjoy the full range of Windows applications as native OS-level windows in your Linux environment
+- **🔗 Linux Shortcuts**: Create desktop or application-menu shortcuts for discovered Windows apps and launch them directly through WinBoat
 - **🖥️ Full Windows Desktop**: Access the complete Windows desktop experience when you need it, or run individual apps seamlessly integrated into your Linux workflow
 - **📁 Filesystem Integration**: Your home directory is mounted in Windows, allowing easy file sharing between the two systems without any hassle
 - **✨ And many more**: Smartcard passthrough, resource monitoring, and more features being added regularly
