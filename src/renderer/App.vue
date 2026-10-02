@@ -159,7 +159,7 @@
 import { RouteRecordRaw, RouterLink, useRoute, useRouter } from "vue-router";
 import { routes } from "./router";
 import { Icon } from "@iconify/vue";
-import { onMounted, ref, useTemplateRef, watch, reactive, computed } from "vue";
+import { onMounted, onUnmounted, ref, useTemplateRef, watch, reactive, computed } from "vue";
 import { isInstalled } from "./lib/install";
 import { Winboat } from "./lib/winboat";
 import { openAnchorLink } from "./utils/openLink";
@@ -167,8 +167,10 @@ import { WinboatConfig } from "./lib/config";
 import { USBManager } from "./lib/usbmanager";
 import { NOVNC_URL } from "./lib/constants";
 import { performAutoMigrations } from "./lib/migrate";
+import { decodeLaunchAppPayload } from "./lib/shortcuts";
 const { BrowserWindow }: typeof import("@electron/remote") = require("@electron/remote");
 const os: typeof import("os") = require("node:os");
+const { ipcRenderer }: typeof import("electron") = require("electron");
 
 const $router = useRouter();
 const $route = useRoute();
@@ -181,10 +183,15 @@ let updateTimeout: NodeJS.Timeout | null = null;
 const manualUpdateRequired = ref(false);
 const MANUAL_UPDATE_TIMEOUT = 60000; // 60 seconds
 const updateDialog = useTemplateRef("updateDialog");
+let lastLaunchPayload: string | null = null;
+let pendingLaunchPayload: string | null = null;
 
 const animationsDisabled = computed(() => wbConfig?.config.disableAnimations);
 
 onMounted(async () => {
+    ipcRenderer.on("shortcut-launch-request", onShortcutLaunchRequest);
+    ipcRenderer.send("shortcut-launch-ready");
+
     const winboatInstalled = await isInstalled();
 
     if (winboatInstalled) {
@@ -198,6 +205,7 @@ onMounted(async () => {
 
         // After migrations, go to home
         $router.push("/home");
+        await tryLaunchFromShortcutPayload();
     } else {
         console.log("Not installed, redirecting to setup...");
         $router.push("/setup");
@@ -223,6 +231,19 @@ onMounted(async () => {
             }
         },
     );
+
+    watch(
+        () => winboat?.isOnline.value,
+        async isOnline => {
+            if (isOnline) {
+                await tryLaunchFromShortcutPayload();
+            }
+        },
+    );
+});
+
+onUnmounted(() => {
+    ipcRenderer.removeListener("shortcut-launch-request", onShortcutLaunchRequest);
 });
 
 function handleMinimize() {
@@ -246,6 +267,50 @@ function handleTitleBarEvent(e: CustomEvent) {
         case "minimize":
             BrowserWindow.getFocusedWindow()!.minimize();
             break;
+    }
+}
+
+async function onShortcutLaunchRequest(_event: unknown, payload: string) {
+    if (!payload || payload === lastLaunchPayload) return;
+    lastLaunchPayload = payload;
+    pendingLaunchPayload = payload;
+    await tryLaunchFromShortcutPayload();
+}
+
+async function tryLaunchFromShortcutPayload() {
+    if (!winboat || !pendingLaunchPayload) return;
+
+    const launchTarget = decodeLaunchAppPayload(pendingLaunchPayload);
+    if (!launchTarget) {
+        pendingLaunchPayload = null;
+        return;
+    }
+
+    const availableApps = await winboat.appMgr?.getApps();
+    const app = availableApps?.find(
+        current =>
+            current.Name === launchTarget.Name &&
+            current.Path === launchTarget.Path &&
+            (current.Args || "") === launchTarget.Args &&
+            current.Source === launchTarget.Source,
+    );
+
+    if (!app) {
+        console.error("Unable to launch app from shortcut payload:", launchTarget);
+        pendingLaunchPayload = null;
+        return;
+    }
+
+    if (!winboat.isOnline.value) {
+        console.error("Unable to launch app from shortcut: WinBoat guest is offline");
+        return;
+    }
+
+    try {
+        await winboat.launchApp(app);
+        pendingLaunchPayload = null;
+    } catch (error) {
+        console.error("Unable to launch app from shortcut:", error);
     }
 }
 </script>

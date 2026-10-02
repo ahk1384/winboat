@@ -97,6 +97,42 @@
             </footer>
         </dialog>
 
+        <dialog ref="createShortcutDialog">
+            <h3 class="mb-2">Create Shortcut</h3>
+            <div class="mt-4 w-[28vw] flex flex-col gap-2">
+                <x-label>Select where to place the shortcut for {{ contextMenuTarget?.Name }}</x-label>
+                <x-select @change="(e: any) => (shortcutDestination = e.detail.newValue)">
+                    <x-menu>
+                        <x-menuitem value="desktop" :toggled="shortcutDestination === 'desktop'">
+                            <x-label>Desktop</x-label>
+                        </x-menuitem>
+                        <x-menuitem value="applications" :toggled="shortcutDestination === 'applications'">
+                            <x-label>Applications Menu</x-label>
+                        </x-menuitem>
+                    </x-menu>
+                </x-select>
+            </div>
+            <footer>
+                <x-button @click="createShortcutDialog?.close()">
+                    <x-label>Cancel</x-label>
+                </x-button>
+                <x-button toggled @click="createShortcut">
+                    <x-label>Create Shortcut</x-label>
+                </x-button>
+            </footer>
+        </dialog>
+
+        <x-label
+            v-if="shortcutNotice"
+            class="block px-2 mb-3"
+            :class="{
+                'text-emerald-400': shortcutNotice.type === 'success',
+                'text-amber-400': shortcutNotice.type === 'info',
+                'text-red-400': shortcutNotice.type === 'error',
+            }"
+        >
+            {{ shortcutNotice.message }}
+        </x-label>
         <div
             class="flex justify-between items-center mb-6"
             :class="{
@@ -219,6 +255,11 @@
                     <x-label>Launch</x-label>
                 </WBMenuItem>
 
+                <WBMenuItem :disabled="!shortcutsSupported" @click="openCreateShortcutDialog">
+                    <Icon class="size-4" icon="mdi:link-variant"></Icon>
+                    <x-label>Create Shortcut</x-label>
+                </WBMenuItem>
+
                 <WBMenuItem @click="contextMenuTarget && openEditAppDialog(contextMenuTarget)">
                     <Icon class="size-4" icon="mdi:pencil-outline"></Icon>
                     <x-label>Edit</x-label>
@@ -266,8 +307,10 @@ import { Jimp, JimpMime } from "jimp";
 import { WinboatConfig } from "../lib/config";
 import { WINBOAT_API_URL } from "../lib/constants";
 import { guestAuthHeaders } from "../utils/guestServer";
+import { createAppShortcut, getWinboatExecutablePath, type ShortcutDestination } from "../lib/shortcuts";
 const nodeFetch: typeof import("node-fetch").default = require("node-fetch");
 const FormData: typeof import("form-data") = require("form-data");
+const process: typeof import("node:process") = require("node:process");
 
 const winboat = Winboat.getInstance();
 const apps = ref<WinApp[]>([]);
@@ -275,6 +318,7 @@ const searchInput = ref("");
 const sortBy = ref("");
 const filterBy = ref("all");
 const addCustomAppDialog = useTemplateRef("addCustomAppDialog");
+const createShortcutDialog = useTemplateRef("createShortcutDialog");
 const customAppName = ref("");
 const customAppPath = ref("");
 const customAppIcon = ref(`data:image/png;base64,${AppIcons[DEFAULT_ICON]}`);
@@ -407,6 +451,9 @@ const customAppAddErrors = computed(() => {
 });
 
 const launchingAppId = ref<string | null>(null);
+const shortcutDestination = ref<ShortcutDestination>("desktop");
+const shortcutNotice = ref<{ type: "success" | "info" | "error"; message: string } | null>(null);
+const shortcutsSupported = process.platform === "linux";
 
 function handleLaunchApp(app: WinApp) {
     launchingAppId.value = app.id!;
@@ -491,6 +538,65 @@ function launchApp() {
     if (contextMenuTarget.value) {
         winboat.launchApp(contextMenuTarget.value);
     }
+}
+
+function openCreateShortcutDialog() {
+    if (!shortcutsSupported) {
+        setShortcutNotice("error", "Shortcut creation is only supported on Linux.");
+        return;
+    }
+    shortcutDestination.value = "desktop";
+    createShortcutDialog.value?.showModal();
+}
+
+function setShortcutNotice(type: "success" | "info" | "error", message: string) {
+    shortcutNotice.value = { type, message };
+}
+
+async function createShortcut() {
+    if (!contextMenuTarget.value) {
+        createShortcutDialog.value?.close();
+        return;
+    }
+
+    try {
+        const app = contextMenuTarget.value;
+        const executablePath = getWinboatExecutablePath();
+        let result = createAppShortcut({
+            app,
+            destination: shortcutDestination.value,
+            executablePath,
+        });
+
+        if (result.status === "conflict") {
+            const overwrite = window.confirm(`A shortcut already exists at:\n${result.filePath}\n\nReplace it?`);
+            if (overwrite) {
+                result = createAppShortcut({
+                    app,
+                    destination: shortcutDestination.value,
+                    executablePath,
+                    overwrite: true,
+                });
+            } else {
+                setShortcutNotice("info", `Shortcut already exists: ${result.filePath}`);
+                createShortcutDialog.value?.close();
+                return;
+            }
+        }
+
+        if (result.status === "already_exists") {
+            setShortcutNotice("info", `Shortcut is already up to date: ${result.filePath}`);
+        } else if (result.status === "updated") {
+            setShortcutNotice("success", `Shortcut updated: ${result.filePath}`);
+        } else {
+            setShortcutNotice("success", `Shortcut created: ${result.filePath}`);
+        }
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        setShortcutNotice("error", `Could not create shortcut: ${message}`);
+    }
+
+    createShortcutDialog.value?.close();
 }
 
 /**
